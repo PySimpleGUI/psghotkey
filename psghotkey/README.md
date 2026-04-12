@@ -7,9 +7,9 @@
 </p>
 
 
-<p align="center"><img width="583" height="415" src="screenshot.jpg"><p>
-
-
+<p align="center">
+  <img src="https://raw.githubusercontent.com/PySimpleGUI/psghotkey/main/screenshot.jpg" width="583" height="415" alt="Screenshot">
+</p>
 
 ## Features
 

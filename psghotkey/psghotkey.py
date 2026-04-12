@@ -43,7 +43,7 @@ import psgtray
 
 
 
-version = '6.0.1'
+version = '6.0.2'
 __version__ = version.split()[0]
 
 """
@@ -53,6 +53,7 @@ Changelog since last major release
                         License changed to LGPL3    
                         Removed the docstring example code and added commented out launch example
 6.0.1   12-Apr-2026     Fixed screenshot in ReadMe for PyPI release
+6.0.2   12-Apr-2026     One more try to fix screenshot.  Needed to add a hardcoded URL to image on GitHub for PyPI to work
 """
 
 
