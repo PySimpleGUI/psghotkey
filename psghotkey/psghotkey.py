@@ -156,7 +156,7 @@ def main():
         elif event == 'Edit Me':
             sg.execute_editor(__file__)
         elif event == 'Versions':
-            sg.cprint(sg.get_versions(), c='white on purple')
+            sg.cprint(f'{__file__}\n{sg.get_versions()}', c='white on purple')
 
     tray.close()            # optional but without a close, the icon may "linger" until moused over
     window.close()
