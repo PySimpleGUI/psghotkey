@@ -112,7 +112,7 @@ def main():
               [sg.Multiline(size=(80,15), reroute_stdout=False, reroute_cprint=True, write_only=True, key='-OUT-')],
               [sg.B('Hide Window'), sg.B('Show Hotkeys'), sg.B('Edit Me'), sg.B('Versions'), sg.Button('Exit')]]
 
-    window = sg.Window('PySimpleHotkey', layout, finalize=True, enable_close_attempted_event=True, right_click_menu=menu, icon=icon)
+    window = sg.Window('PySimpleHotkey', layout, finalize=True, enable_close_attempted_event=True, right_click_menu=menu, icon=window_icon())
 
     tray = psgtray.SystemTray(menu, single_click_events=False, window=window, icon=window_icon())
     tray.show_message('PySimpleHotkey', 'PySimpleHotkey Started!')
