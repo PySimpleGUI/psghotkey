@@ -1,24 +1,17 @@
-'''
-Copyright 2021-2024 PySimpleSoft, Inc. and/or its licensors. All rights reserved.
-
-Redistribution, modification, or any other use of PySimpleGUI or any portion thereof is subject
-to the terms of the PySimpleGUI License Agreement available at https://eula.pysimplegui.com.
-
-You may not redistribute, modify or otherwise use PySimpleGUI or its contents except pursuant
-to the PySimpleGUI License Agreement.
-'''
-
-import os
-import sys
 import PySimpleGUI as sg
 import keyboard
 import psgtray
 
-version = '5.0.0'
-__version__ = version.split()[0]
+
 
 
 """
+
+      _____  _______  ______ _     _  _____  _______ _     _ _______ __   __
+     |_____] |______ |  ____ |_____| |     |    |    |____/  |______   \_/  
+     |       ______| |_____| |     | |_____|    |    |    \_ |______    |
+     
+     
     PySimpleHotkey
     
     A simple hotkey manager that runs in the system tray.
@@ -28,165 +21,51 @@ __version__ = version.split()[0]
         keyboard
         psgtray
     
-    Define your hotkeys in the dictionary.  At the moment, the actions are to insert text or launch a program.
+    Define your hotkeys in the hotkey_dict dictionary.  At the moment, the actions are to insert text or launch a program.
+    You can alos modify the tray icon menu. 
+        Add a menu item and code in the event loop to do whatever you want when item is selected.
     
     Improvement ideas:
         This program could be extended to store the settings in a User Settings file instead of in the code.
         The keyboard handler is hooking in a low level. 
             Callbacks into this code happen when shift, control, etc are pressed
             There are likely better ways that the keyboard package could be used
-            Didn't take the time to dig further into optimizing    
-"""
-
-'''
-M""M                     dP            dP dP                   
-M  M                     88            88 88                   
-M  M 88d888b. .d8888b. d8888P .d8888b. 88 88 .d8888b. 88d888b. 
-M  M 88'  `88 Y8ooooo.   88   88'  `88 88 88 88ooood8 88'  `88 
-M  M 88    88       88   88   88.  .88 88 88 88.  ... 88       
-M  M dP    dP `88888P'   dP   `88888P8 dP dP `88888P' dP       
-MMMM
-'''
-
-
-def pip_install_thread(window, sp):
-    window.write_event_value('-THREAD-', (sp, 'Install thread started'))
-    for line in sp.stdout:
-        oline = line.decode().rstrip()
-        window.write_event_value('-THREAD-', (sp, oline))
-
-
-
-def pip_install_latest():
-
-    pip_command = '-m pip install --upgrade --no-cache-dir PySimpleGUI>=5'
-
-    python_command = sys.executable  # always use the currently running interpreter to perform the pip!
-    if 'pythonw' in python_command:
-        python_command = python_command.replace('pythonw', 'python')
-
-    layout = [[sg.Text('Installing PySimpleGUI', font='_ 14')],
-              [sg.Multiline(s=(90, 15), k='-MLINE-', reroute_cprint=True, reroute_stdout=True, echo_stdout_stderr=True, write_only=True, expand_x=True, expand_y=True)],
-              [sg.Push(), sg.Button('Downloading...', k='-EXIT-'), sg.Sizegrip()]]
-
-    window = sg.Window('Pip Install PySimpleGUI Utilities', layout, finalize=True, keep_on_top=True, modal=True, disable_close=True, resizable=True)
-
-    window.disable_debugger()
-
-    sg.cprint('Installing with the Python interpreter =', python_command, c='white on purple')
-
-    sp = sg.execute_command_subprocess(python_command, pip_command, pipe_output=True, wait=False)
-
-    window.start_thread(lambda: pip_install_thread(window, sp), end_key='-THREAD DONE-')
-
-    while True:
-        event, values = window.read()
-        if event == sg.WIN_CLOSED or (event == '-EXIT-' and window['-EXIT-'].ButtonText == 'Done'):
-            break
-        elif event == '-THREAD DONE-':
-            sg.cprint('\n')
-            show_package_version('PySimpleGUI')
-            sg.cprint('Done Installing PySimpleGUI.  Click Done and the program will restart.', c='white on red', font='default 12 italic')
-            window['-EXIT-'].update(text='Done', button_color='white on red')
-        elif event == '-THREAD-':
-            sg.cprint(values['-THREAD-'][1])
-
-    window.close()
-
-def suggest_upgrade_gui():
-    layout = [[sg.Image(sg.EMOJI_BASE64_HAPPY_GASP), sg.Text(f'PySimpleGUI 5+ Required', font='_ 15 bold')],
-              [sg.Text(f'PySimpleGUI 5+ required for this program to function correctly.')],
-              [sg.Text(f'You are running PySimpleGUI {sg.version}')],
-              [sg.Text('Would you like to upgrade to the latest version of PySimpleGUI now?')],
-              [sg.Push(), sg.Button('Upgrade', size=8, k='-UPGRADE-'), sg.Button('Cancel', size=8)]]
-
-    window = sg.Window(title=f'Newer version of PySimpleGUI required', layout=layout, font='_ 12')
-
-    while True:
-        event, values = window.read()
-
-        if event in (sg.WIN_CLOSED, 'Cancel'):
-            window.close()
-            break
-        elif event == '-UPGRADE-':
-            window.close()
-            pip_install_latest()
-            sg.execute_command_subprocess(sys.executable, __file__, pipe_output=True, wait=False)
-            break
-
-
-def make_str_pre_38(package):
-    return f"""
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-import pkg_resources
-try:
-    ver=pkg_resources.get_distribution("{package}").version.rstrip()
-except:
-    ver=' '
-print(ver, end='')
-"""
-
-def make_str(package):
-    return f"""
-import importlib.metadata
-
-try:
-    ver = importlib.metadata.version("{package}")
-except importlib.metadata.PackageNotFoundError:
-    ver = ' '
-print(ver, end='')
+            Didn't take the time to dig further into optimizing
+    
+    Keyboard package and some code borrowed from a project named "pingmote". More info here:
+        https://github.com/dchen327/pingmote
+    It was forked, modified, and a system tray version posted as a PySimpleGUI repo:
+        https://github.com/PySimpleGUI/pingmote
+    
+    Copyright 2021-2026 PySimpleGUI
+    Licensed as LGPL3.
 """
 
 
-def show_package_version(package):
-    """
-    Function that shows all versions of a package
-    """
-    interpreter = sg.execute_py_get_interpreter()
-    sg.cprint(f'{package} upgraded to ', end='', c='red')
-    # print(f'{interpreter}')
-    if sys.version_info.major == 3 and sys.version_info.minor in (6, 7):  # if running Python version 3.6 or 3.7
-        pstr = make_str_pre_38(package)
-    else:
-        pstr = make_str(package)
-    temp_file = os.path.join(os.path.dirname(__file__), 'temp_py.py')
-    with open(temp_file, 'w') as file:
-        file.write(pstr)
-    sg.execute_py_file(temp_file, interpreter_command=interpreter, pipe_output=True, wait=True)
-    os.remove(temp_file)
+
+version = '6.0'
+__version__ = version.split()[0]
+
+"""
+Changelog since last major release
+
+6.0     12-Apr-2026     Bumped ver from 5 to 6 to move to LGPL3
+                        License changed to LGPL3    
+                        Removed the docstring example code and added commented out launch example
+"""
 
 
 
-def upgrade_check():
-    if not sg.version.startswith('5'):
-        suggest_upgrade_gui()
-        exit()
-
-
-
-'''
-MM"""""""`YM          MP""""""`MM oo                     dP          M""MMMMM""MM            dP   dP                         
-MM  mmmmm  M          M  mmmmm..M                        88          M  MMMMM  MM            88   88                         
-M'        .M dP    dP M.      `YM dP 88d8b.d8b. 88d888b. 88 .d8888b. M         `M .d8888b. d8888P 88  .dP  .d8888b. dP    dP 
-MM  MMMMMMMM 88    88 MMMMMMM.  M 88 88'`88'`88 88'  `88 88 88ooood8 M  MMMMM  MM 88'  `88   88   88888"   88ooood8 88    88 
-MM  MMMMMMMM 88.  .88 M. .MMM'  M 88 88  88  88 88.  .88 88 88.  ... M  MMMMM  MM 88.  .88   88   88  `8b. 88.  ... 88.  .88 
-MM  MMMMMMMM `8888P88 Mb.     .dM dP dP  dP  dP 88Y888P' dP `88888P' M  MMMMM  MM `88888P'   dP   dP   `YP `88888P' `8888P88 
-MMMMMMMMMMMM      .88 MMMMMMMMMMM               88                   MMMMMMMMMMMM                                        .88 
-              d8888P                            dP                                                                   d8888P
-'''
 
 # Defintions of the hotkeys
-DOCSTRING_SHORTCUT = 'ctrl+alt+shift+d'
-DOCSTRING_TYPES_SHORTCUT = 'ctrl+alt+shift+f5'
 PYSIMPLEGUI_SHORTCUT = 'alt+shift+p'
 
 # dictionary that maps a hotkey to an action
 hotkey_dict = {
-    DOCSTRING_SHORTCUT :        (lambda :  sg.execute_py_file(r'DocstringTools\AlignDocstrings.py', '--clipboard', cwd='.')),
-    DOCSTRING_TYPES_SHORTCUT :  (lambda :  sg.execute_py_file(r'DocstringTools\AddTypesToDocstring.py', cwd='.')),
-    PYSIMPLEGUI_SHORTCUT:       (lambda: keyboard.write('PySimpleGUI')),
-    }
+    PYSIMPLEGUI_SHORTCUT:       (lambda: keyboard.write('PySimpleGUI')),        # insert the text PySimpleGUI when get hotkey
+    # LAUNCH_A_PROGRAM_SHORTCUT: (lambda: sg.execute_py_file(r'path_to_my_py_file\util.py', cwd='.')),      # example of how to launch a program
+
+}
 
 
 '''
@@ -224,12 +103,6 @@ MMMMMMMMMMMMMM
 '''
 
 def main():
-
-    sg.user_settings_filename(filename='psghotkey.json')
-    upgrade_check()
-
-    sg.theme('dark gray 13')
-
     keyboard.hook(custom_hotkey)
 
     menu = ['', ['Show Window', 'Hide Window', 'Edit Me', '---',  'Change Icon', ['Happy', 'Sad', 'Plain'], 'Exit']]
@@ -239,7 +112,7 @@ def main():
               [sg.Multiline(size=(80,15), reroute_stdout=False, reroute_cprint=True, write_only=True, key='-OUT-')],
               [sg.B('Hide Window'), sg.B('Show Hotkeys'), sg.B('Edit Me'), sg.B('Versions'), sg.Button('Exit')]]
 
-    window = sg.Window('PySimpleHotkey', layout, finalize=True, enable_close_attempted_event=True, right_click_menu=menu, icon=window_icon())
+    window = sg.Window('PySimpleHotkey', layout, finalize=True, enable_close_attempted_event=True, right_click_menu=menu, icon=icon)
 
     tray = psgtray.SystemTray(menu, single_click_events=False, window=window, icon=window_icon())
     tray.show_message('PySimpleHotkey', 'PySimpleHotkey Started!')
