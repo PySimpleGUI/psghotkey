@@ -2,12 +2,12 @@
   <p align="center"><img width="238" height="135" src="https://pysimplegui.net/images/logos/psglogofull.svg"><p>
 
   <h2 align="center">psghotkey</h2>
+  <h2 align="center">A Windows Hotkey Tool</h2>
   <h2 align="center">A PySimpleGUI Application</h2>
 </p>
 
-Windows Hotkey Tool
 
-<p align="center"><img width="583" height="415" src="screenshot.gif"><p>
+<p align="center"><img width="583" height="415" src="screenshot.jpg"><p>
 
 
 

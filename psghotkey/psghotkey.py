@@ -43,7 +43,7 @@ import psgtray
 
 
 
-version = '6.0'
+version = '6.0.1'
 __version__ = version.split()[0]
 
 """
@@ -52,6 +52,7 @@ Changelog since last major release
 6.0     12-Apr-2026     Bumped ver from 5 to 6 to move to LGPL3
                         License changed to LGPL3    
                         Removed the docstring example code and added commented out launch example
+6.0.1   12-Apr-2026     Fixed screenshot in ReadMe for PyPI release
 """
 
 

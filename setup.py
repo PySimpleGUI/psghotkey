@@ -10,7 +10,7 @@ def readme():
 
 setuptools.setup(
     name="psghotkey",
-    version="6.0",
+    version="6.0.1",
     author="PySimpleGUI",
     install_requires=["PySimpleGUI","keyboard","psgtray"],
     description="A Hotkey Manager using PySimpleGUI and psgtray",
