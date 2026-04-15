@@ -17,6 +17,10 @@
 * Demonstrates integrating the system tray into your application
 * Example sophisticated docstring formatting application of a hotkey
 
+## Adding your hotkeys
+
+At the moment, customizing your menu and hotkeys is done by editing the source code.  Be careful when upgrading that you don't lose edits you have made.
+
 
 ## Installation
 
