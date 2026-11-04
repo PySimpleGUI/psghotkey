@@ -2,7 +2,7 @@ import setuptools
 
 def readme():
     try:
-        with open("README.md") as f:
+        with open("README.md", encoding="utf-8") as f:
             return f.read()
     except IOError:
         return ""
@@ -10,18 +10,18 @@ def readme():
 
 setuptools.setup(
     name="psghotkey",
-    version="6.1",
+    version="6.1.1",
     author="PySimpleGUI",
-    install_requires=["PySimpleGUI","keyboard","psgtray"],
+    install_requires=["PySimpleGUI","keyboard","psgtray","Pillow"],
     description="A Hotkey Manager using PySimpleGUI and psgtray",
     long_description=readme(),
     long_description_content_type="text/markdown",
     keywords="GUI UI PySimpleGUI tkinter psghotkey hotkey autohotkey",
-    url="https://github.com/PySimpleGUI",
+    url="https://github.com/PySimpleGUI/psghotkey",
     packages=setuptools.find_packages(),
     license= "GNU Lesser General Public License v3 (LGPLv3)",
     python_requires=">=3.6",
-    classifiers=(
+    classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
@@ -40,9 +40,9 @@ setuptools.setup(
         "Programming Language :: Python :: 3.15",
         "Topic :: Multimedia :: Graphics",
         "Topic :: Software Development :: User Interfaces",
-    ),
+    ],
     package_data={"":
-                      ["*", "*.*","DocstringTools/*"]
+                      ["*", "*.*"]
                   },
     entry_points={"gui_scripts": [
         "psghotkey=psghotkey.psghotkey:main"
