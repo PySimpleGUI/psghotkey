@@ -3,7 +3,7 @@ import keyboard
 import ctypes
 import socket, threading, time
 import tkinter as tk
-import os, shlex, sys
+import os, shlex, sys, tempfile
 import base64, io, math, traceback
 from collections import deque
 from typing import List, Any, Dict, ClassVar
@@ -43,6 +43,7 @@ r"""
     to edit it.  Right-click for the menu:  Hotkeys..., Theme (the widgets' 32), Brightness..., Edit Me, Version, Exit.
     The tray icon:  click = show / hide the card,  right-click = the same menu.  Closing the card (its x or Esc) minimizes it to the tray
     (right-click > Minimize to tray when closed turns that off).  You can add your own items to the menu in make_menu() and handle them in the event loop.
+    psghotkey --demo shows example hotkeys, for a screenshot - it registers nothing, leaves your settings alone and doesn't stop a running psghotkey.
 
     On Windows each hotkey is registered with Windows itself (RegisterHotKey), so Windows does the matching, the key combination is
     swallowed instead of reaching the program underneath, and there is no keyboard hook for Windows to silently drop after a sleep,
@@ -129,6 +130,8 @@ Changelog since last major release
                         Only the hotkey entries are rewritten now.
 6.1.1   03-Nov-2026     Claude: A program that can't be launched shows in RECENT in red (it was only printed, and a .pyw has no console).
                         main() shows a crash with popup_error_with_traceback.  Right-click > Versions is Version.
+6.1.1   04-Nov-2026     Claude: --demo shows example hotkeys and a made-up RECENT list, for screenshots: it registers nothing, keeps its settings in
+                        the temp folder (your psghotkey.json isn't touched), has no tray icon, and a running psghotkey keeps running.
 """
 
 
@@ -141,6 +144,10 @@ hotkey_info = {}        # maps a hotkey string to its (action, value) - what the
 SETTINGS_FILENAME = 'psghotkey.json'    # the hotkeys AND the program's own settings (theme, tray, where the card is) - save_hotkey_list() keeps the latter
 ACTION_TEXT = 'Insert text'
 ACTION_LAUNCH = 'Launch program'
+DEMO = '--demo' in sys.argv              # psghotkey --demo: example hotkeys for a screenshot - nothing of yours is read, changed or stopped
+DEMO_HOTKEYS = [('ctrl+alt+p', ACTION_TEXT, 'PySimpleGUI'), ('ctrl+alt+t', ACTION_TEXT, 'Thanks for your help!'), ('ctrl+alt+n', ACTION_LAUNCH, 'notepad.exe'),
+                ('ctrl+alt+c', ACTION_LAUNCH, 'calc.exe')]
+DEMO_FOLDER = os.path.join(tempfile.gettempdir(), 'psghotkey_demo')     # the demo's own psghotkey.json (its theme and place are kept there)
 ACTIONS = (ACTION_TEXT, ACTION_LAUNCH)
 ACTION_SHORT = {ACTION_TEXT: 'Type', ACTION_LAUNCH: 'Run'}       # the card's ACTION column
 PYTHON_NAMES = ('python', 'python.exe', 'pythonw', 'pythonw.exe', 'python3', 'py', 'py.exe', 'pyw', 'pyw.exe')     # 'pythonw x.pyw' shows as x.pyw
@@ -392,6 +399,8 @@ def unregister_hotkeys():
 def register_hotkeys():
     """ Register every hotkey in hotkey_dict - with Windows (RegisterHotKey) on Windows, with the keyboard package elsewhere.
         Returns the list of hotkeys that were refused (bad key names, or already taken by another program). """
+    if DEMO:
+        return []                                       # the demo registers nothing: a running psghotkey keeps its hotkeys
     if sys.platform == 'win32':
         if G.win_hotkeys is None:
             G.win_hotkeys = WindowsHotkeys()
@@ -509,7 +518,7 @@ K_STATUS = '-STATUS-'
 
 def get_settings() -> sg.UserSettings:
     if G.hotkey_settings is None:
-        G.hotkey_settings = sg.UserSettings(SETTINGS_FILENAME)
+        G.hotkey_settings = sg.UserSettings(SETTINGS_FILENAME, path=DEMO_FOLDER) if DEMO else sg.UserSettings(SETTINGS_FILENAME)
     return G.hotkey_settings
 
 
@@ -1305,6 +1314,8 @@ def card_height():
 
 def summary():
     """ The bottom line when the mouse isn't over anything and there's no message """
+    if DEMO:
+        return 'demo - example hotkeys, nothing is registered   ·   right-click for the menu'
     n = len(hotkey_info)
     if not n:
         return 'Click the gear to add your first hotkey'
@@ -1851,21 +1862,33 @@ def brightness_panel(card, keep_going):
 # --- end BRIGHTNESS ---
 
 
+def demo_settings():
+    """ --demo: the example hotkeys into the demo's own settings file, and a few made-up lines for RECENT """
+    save_hotkey_list(DEMO_HOTKEYS)
+    for minutes, hotkey in ((3, 'ctrl+alt+p'), (11, 'ctrl+alt+n'), (26, 'ctrl+alt+t'), (42, 'ctrl+alt+p')):
+        action, value = next((a, v) for h, a, v in DEMO_HOTKEYS if h == hotkey)
+        what = f'ran {short_command(value)}' if action == ACTION_LAUNCH else f'typed {what_it_does(action, value)}'
+        G.recent.append((time.strftime('%H:%M:%S', time.localtime(time.time() - minutes * 60)), hotkey, what, None))
+
+
 def run():
-    instance_sock, replaced_running_copy = claim_single_instance(INSTANCE_PORT)       # a previous copy, if any, is told to exit before we start
+    instance_sock, replaced_running_copy = (None, False) if DEMO else claim_single_instance(INSTANCE_PORT)    # a previous copy is told to exit (not by the demo)
     sg.set_options(dpi_awareness=True, font=(FONT_UI, 10))                            # dpi aware: the card is drawn at the screen's own scale, so it's sharp
     settings = get_settings()
+    if DEMO:
+        demo_settings()
     G.theme = settings.get(K_THEME, 'Toybox')
     G.theme = OLD_THEME_NAMES.get(G.theme, G.theme if G.theme in THEMES else 'Toybox')
     G.bright = settings.get(K_BRIGHT, 0)
     G.bright = G.bright if G.bright in BRIGHT_LEVELS else 0
-    Tray.use = bool(SystemTray) and settings.get(K_MIN_TO_TRAY, True)
+    Tray.use = bool(SystemTray) and settings.get(K_MIN_TO_TRAY, True) and not DEMO
     apply_sg_theme()
     build_hotkey_dict()
 
     menu_bg, menu_fg = menu_colors()
     layout = [[sg.Image(data=render(), key=K_IMAGE, background_color=TRANSPARENT, pad=(0, 0))]]
-    window = sg.Window(APP_NAME, layout, no_titlebar=True, grab_anywhere=True, keep_on_top=True, margins=(0, 0), element_padding=(0, 0), background_color=TRANSPARENT,
+    title = f'{APP_NAME} - demo' if DEMO else APP_NAME
+    window = sg.Window(title, layout, no_titlebar=True, grab_anywhere=True, keep_on_top=True, margins=(0, 0), element_padding=(0, 0), background_color=TRANSPARENT,
                        transparent_color=TRANSPARENT if SEE_THROUGH else None, alpha_channel=0, icon=window_icon(), finalize=True, enable_close_attempted_event=True,
                        right_click_menu=make_menu(), right_click_menu_background_color=menu_bg, right_click_menu_text_color=menu_fg,
                        right_click_menu_selected_colors=('#ffffff', C_MENU_SEL), right_click_menu_font=FONT_MENU)

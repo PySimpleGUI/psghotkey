@@ -8,7 +8,7 @@
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/PySimpleGUI/psghotkey/main/screenshot.png" width="480" height="320" alt="psghotkey">
+  <img src="https://raw.githubusercontent.com/PySimpleGUI/psghotkey/main/screenshot.png" width="480" height="348" alt="psghotkey">
 </p>
 
 ## Features
