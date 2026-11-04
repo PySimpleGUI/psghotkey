@@ -15,7 +15,8 @@
 
 * A complete hotkey manager - a key combination inserts text or launches a program
 * On Windows each hotkey is registered with Windows itself, so the keys never reach the program underneath
-* Lives in the system tray - its card has a row per hotkey that lights up as it fires
+* Lives in the system tray - its card lists your hotkeys, with a green dot on each one that is working
+* When a hotkey fires, its row is highlighted for a moment and it is added to the Recent list
 * 32 themes and Brightness
 * Demonstrates integrating the system tray into your application
 
