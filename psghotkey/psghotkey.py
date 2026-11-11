@@ -1,7 +1,7 @@
 import PySimpleGUI as sg
 import keyboard
 import ctypes
-import socket, threading, time
+import socket, struct, subprocess, threading, time
 import tkinter as tk
 import os, shlex, sys, tempfile
 import base64, io, math, traceback
@@ -40,9 +40,12 @@ r"""
     Hotkey names are the keyboard package's:  modifiers + key joined with "+", e.g.  ctrl+alt+h   alt+f9   ctrl+shift+1
     The card (the main window):  one row per hotkey, with a green dot when it works and a red one when Windows refused it (a bad key name, or
     another program already has it - point at the row to see).  A hotkey's row lights up as it fires and RECENT lists the last few.  Click a row
-    to edit it.  Right-click for the menu:  Hotkeys..., Theme (the widgets' 32), Brightness..., Edit Me, Version, Exit.
+    to edit it.  Right-click for the menu:  Hotkeys..., Minimize to tray when closed, Start with Windows, in the tray, Theme (the widgets' 32),
+    Brightness..., Edit Me, Version, Exit - laid out like every PySimpleGUI tray app, with psghotkey and its version at the top.
     The tray icon:  click = show / hide the card,  right-click = the same menu.  Closing the card (its x or Esc) minimizes it to the tray
     (right-click > Minimize to tray when closed turns that off).  You can add your own items to the menu in make_menu() and handle them in the event loop.
+    Right-click > Start with Windows, in the tray: a shortcut in your Startup folder starts psghotkey with Windows, quietly in the tray
+    (pythonw psghotkey.py --tray), so your hotkeys work after every restart.  Off until you tick it.
     psghotkey --demo shows example hotkeys, for a screenshot - it registers nothing, leaves your settings alone and doesn't stop a running psghotkey.
 
     On Windows each hotkey is registered with Windows itself (RegisterHotKey), so Windows does the matching, the key combination is
@@ -56,7 +59,7 @@ r"""
 
 
 
-VERSION = '6.1.1'
+VERSION = '6.1.2'
 __version__ = VERSION
 APP_NAME = 'psghotkey'                  # the name the program shows - spelled like the package, the psghotkey command and psghotkey.json
 
@@ -132,6 +135,9 @@ Changelog since last major release
                         main() shows a crash with popup_error_with_traceback.  Right-click > Versions is Version.
 6.1.1   04-Nov-2026     Claude: --demo shows example hotkeys and a made-up RECENT list, for screenshots: it registers nothing, keeps its settings in
                         the temp folder (your psghotkey.json isn't touched), has no tray icon, and a running psghotkey keeps running.
+6.1.2   11-Nov-2026     Claude: Right-click > Start with Windows, in the tray - a shortcut in your Startup folder starts psghotkey with Windows,
+                        quietly in the tray (pythonw psghotkey.py --tray: no balloon).  Off until you tick it.  The right-click menu is laid out
+                        like every PySimpleGUI tray app: psghotkey 6.1.2 at the top (click it for the Version window), Version 6.1.2 at the bottom.
 """
 
 
@@ -442,7 +448,7 @@ LIST_HEIGHT = 520                    # the list's height in design pixels (less 
 HOTKEY_INPUT_LENGTH = 28
 VALUE_INPUT_LENGTH = 80
 K_STRIP = '-STRIP-'                  # the title strip - the window is dragged by it
-MENU_EDITME_VER_EXIT = ['', ['    Edit Me::Edit Me', '    Version::Version', '    Exit::Exit']]
+MENU_EDITME_VER_EXIT = ['', ['    Edit Me::Edit Me', f'    Version {VERSION}::Version', '    Exit::Exit']]
 
 
 class Block:
@@ -1128,15 +1134,63 @@ def style_menus(window):
 # --- end TRAY ---
 
 
+# --- STARTUP: start with Windows, hidden in the tray - the same block in every tray app (master copy in tray_app_template.pyw / tray_app_recipe.md) ---
+# The program supplies APP_NAME (the shortcut's name) and its icon (PNG base64) to set_startup().  Off to start: the user ticks it once per PC.
+START_IN_TRAY = '--tray' in sys.argv[1:]                          # started by the Startup shortcut: stay hidden in the tray
+K_STARTUP = '-START WITH WINDOWS-'                                # right-click toggle: the shortcut in this user's Startup folder
+
+
+def startup_link():
+    """ the shortcut in this user's Startup folder that starts the program with Windows, hidden in the tray """
+    return os.path.join(os.environ.get('APPDATA', ''), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', f'{APP_NAME}.lnk')
+
+
+def startup_on():
+    return sg.running_windows() and os.path.exists(startup_link())
+
+
+def set_startup(on, icon=None):
+    """ right-click > Start with Windows, in the tray: make the shortcut (pythonw "<this file>" --tray) or remove it.  icon = the program's PNG
+        (base64): it goes beside the program's settings as <APP_NAME>.ico, because a shortcut takes its icon from a file.  Returns '' or why it failed """
+    path = startup_link()
+    try:
+        if not on:
+            if os.path.exists(path):
+                os.remove(path)
+            return ''
+        exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')                     # no console window
+        exe = exe if os.path.isfile(exe) else sys.executable
+        script = os.path.abspath(__file__)
+        ico = ''
+        if icon:
+            png = base64.b64decode(icon)
+            ico = os.path.join(os.path.dirname(sg.user_settings_filename()), f'{APP_NAME}.ico')
+            width, height = struct.unpack('>II', png[16:24])
+            os.makedirs(os.path.dirname(ico), exist_ok=True)
+            with open(ico, 'wb') as f:                                                           # an .ico may hold the PNG as it is (Windows Vista and later)
+                f.write(struct.pack('<HHHBBBBHHII', 0, 1, 1, width % 256, height % 256, 0, 0, 1, 32, len(png), 22) + png)
+        q = lambda s: s.replace("'", "''")                                                       # inside a PowerShell '...' string
+        ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{q(path)}');$s.TargetPath='{q(exe)}';$s.Arguments='\"{q(script)}\" --tray';"
+              f"$s.WorkingDirectory='{q(os.path.dirname(script))}';" + (f"$s.IconLocation='{q(ico)}';" if ico else '') + '$s.Save()')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], creationflags=0x08000000, timeout=30, check=True, capture_output=True)   # no window
+        return '' if os.path.exists(path) else 'Windows did not make the shortcut'
+    except Exception as e:
+        return str(e) or type(e).__name__
+# --- end STARTUP ---
+
+
 def make_menu():
     """ the card's right-click menu - the tray icon's right-click opens the same one.  A check mark on the current choices """
     tick = lambda on: '✓ ' if on else '    '                           # every label starts with a tick or the same width of spaces, so they line up
     theme = lambda n: f'{tick(n == G.theme)}{n}::{KT_THEME(n)}'
-    tray = [f'{tick(Tray.use)}Minimize to tray when closed::{K_MIN_TO_TRAY}', '---'] if SystemTray else []
-    return ['', [f'    Hotkeys...::{K_HOTKEYS}', '---', *tray,
+    tray = [f'{tick(Tray.use)}Minimize to tray when closed::{K_MIN_TO_TRAY}'] if SystemTray else []
+    tray += [f'{tick(startup_on())}Start with Windows, in the tray::{K_STARTUP}'] if SystemTray and sg.running_windows() and not DEMO else []
+    return ['', [f'    {APP_NAME} {VERSION}::Version', '---',                                     # the same layout in every tray app (tray_app_recipe.md)
+                 f'    Hotkeys...::{K_HOTKEYS}', '---', *tray,
                  '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],        # dark, then light
                  f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
-                 '---', '    Edit Me::Edit Me', '    Version::Version', f'    Exit::{K_EXIT}']]
+                 '---', '    Edit Me::Edit Me', f'    Version {VERSION}::Version', f'    Exit::{K_EXIT}']]
 
 
 def apply_menu(window):
@@ -1913,7 +1967,8 @@ def run():
     if Tray.use:
         window.hide()                                           # lives in the tray - the card is only shown when asked for
         window.set_alpha(1)
-        for _ in range(30):                                     # the icon is made in a thread - give it a moment for the balloon
+        window.TKroot.after(8000, lambda: show_card(window) if window_hidden(window) and not Tray.icon else None)   # no icon came: the card shows
+        for _ in range(0 if START_IN_TRAY else 30):             # the icon is made in a thread - give it a moment for the balloon (none at sign-in)
             if Tray.icon:
                 Tray.icon.show_message(APP_NAME, 'Running in the tray.  Click the icon to see your hotkeys.')
                 break
@@ -1949,6 +2004,11 @@ def run():
             if window_hidden(window):
                 show_card(window)                               # never hidden with no tray icon to bring it back
             set_status('Closing the card now minimizes it to the tray' if Tray.use else f'Closing the card now ends {APP_NAME} - the hotkeys stop', None if Tray.use else 'bad')
+            apply_menu(window)
+            redraw(window)
+        elif event == K_STARTUP:
+            error = set_startup(not startup_on(), window_icon())
+            set_status(f'Start with Windows, in the tray: {"on" if startup_on() else "off"}' if not error else f'Start with Windows: {error}', 'bad' if error else 'good')
             apply_menu(window)
             redraw(window)
         elif event == K_HOTKEYS or part in ('gear', 'empty') or isinstance(part, tuple):

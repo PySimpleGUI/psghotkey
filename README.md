@@ -18,6 +18,7 @@
 * Lives in the system tray - its card lists your hotkeys, with a green dot on each one that is working
 * When a hotkey fires, its row is highlighted for a moment and it is added to the Recent list
 * 32 themes and Brightness
+* Right-click > Start with Windows, in the tray - set it once and your hotkeys work after every restart
 * Demonstrates integrating the system tray into your application
 
 ## Adding your hotkeys
