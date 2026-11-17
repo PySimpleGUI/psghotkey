@@ -3,7 +3,7 @@ import keyboard
 import ctypes
 import socket, struct, subprocess, threading, time
 import tkinter as tk
-import os, shlex, sys, tempfile
+import os, re, shlex, sys, tempfile
 import base64, io, math, traceback
 from collections import deque
 from typing import List, Any, Dict, ClassVar
@@ -138,6 +138,12 @@ Changelog since last major release
 6.1.2   11-Nov-2026     Claude: Right-click > Start with Windows, in the tray - a shortcut in your Startup folder starts psghotkey with Windows,
                         quietly in the tray (pythonw psghotkey.py --tray: no balloon).  Off until you tick it.  The right-click menu is laid out
                         like every PySimpleGUI tray app: psghotkey 6.1.2 at the top (click it for the Version window), Version 6.1.2 at the bottom.
+6.1.2   14-Nov-2026     Claude: New versions + Restart (right-click): a newer psghotkey.py saved over this one takes over by itself, as it was -
+                        right-click > New versions to choose (by itself / ask me first / only say so).  After an update the card shows a
+                        yellow UPDATED by its version until you look (click it, or right-click > What's new...).  A tray click brings a
+                        covered card to the front;  sub-menu arrows you can see;  a red tray icon of its own.
+6.1.2   15-Nov-2026     Claude: Nothing is written outside psghotkey's own settings after an update (a notifications log only if one is already
+                        there);  comments tidied.
 """
 
 
@@ -177,7 +183,7 @@ TRANSPARENT = '#010203'              # window color key: anything this color is 
 SEE_THROUGH = sg.running_windows()   # only Windows has the color key - elsewhere the card has square corners
 # --- WIDGET THEMES: the same block in every card widget (master copy in modern_widget_recipe.md) - change it in all of them at once ---
 # card = background, border = outline, track = gauge track / lines, text = main text, dim = labels.   16 dark first, then 16 light: the Theme menu
-# shows them as two columns of color chips.  ForestFloor and CrimsonVelvet come from Mike's dark themes; the other colored darks follow their lead.
+# shows them as two columns of color chips.  ForestFloor and CrimsonVelvet come from two hand-made dark themes; the other colored darks follow them.
 THEMES = {'Toybox':        {'card': '#141821', 'border': '#2f3a4e', 'track': '#1e2430', 'text': '#e6eaf2', 'dim': '#8a93a3'},
           'Carbon':        {'card': '#121212', 'border': '#2e2e2e', 'track': '#1f1f1f', 'text': '#e0e0e0', 'dim': '#8c8c8c'},
           'Slate':         {'card': '#2a3140', 'border': '#48526a', 'track': '#363e50', 'text': '#eef1f6', 'dim': '#a3acbd'},
@@ -1058,7 +1064,8 @@ TRAY_TOOLTIP = f'{APP_NAME}  -  click for the window,  right-click for the menu'
 K_QUIT_REQUEST = '-QUIT-REQUEST-'    # event sent to the window when a newer copy wants us to exit
 
 
-# --- TRAY: the same block in every tray app (master copy in tray_app_template.pyw / tray_app_recipe.md) ---
+# --- TRAY: the same block in every tray app (master copy in tray_app_template.pyw / tray_app_recipe.md) - v2, 14-Nov-2026 ---
+# v2: a tray click brings a covered window to the front (hides it only when it is in view);  sub-menus get an arrow you can see on a dark menu
 try:
     from psgtray import SystemTray
 except ImportError:                   # no tray icon - closing the window ends the program
@@ -1108,11 +1115,34 @@ def window_show(window):
     window.force_focus()
 
 
+def window_in_view(window):
+    """ showing and nothing covers it (Windows: the window under 5 of its points is ours).  Elsewhere: showing.  Program standards, 11-Nov: a plain
+        show / hide toggle needs two clicks for a window lost behind others - so a tray click brings a covered window to the front """
+    if window_hidden(window):
+        return False
+    if not sg.running_windows():
+        return True
+    try:
+        import ctypes.wintypes
+        user32 = ctypes.WinDLL('user32')
+        user32.WindowFromPoint.restype = ctypes.c_void_p
+        user32.WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
+        user32.GetAncestor.restype = ctypes.c_void_p
+        user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        root = window.TKroot
+        mine = user32.GetAncestor(root.winfo_id(), 2)
+        x0, y0, w, h = root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(), root.winfo_height()
+        points = [(x0 + w // 2, y0 + h // 2), (x0 + 20, y0 + 20), (x0 + w - 20, y0 + 20), (x0 + 20, y0 + h - 20), (x0 + w - 20, y0 + h - 20)]
+        return all(user32.GetAncestor(user32.WindowFromPoint(ctypes.wintypes.POINT(px, py)), 2) == mine for px, py in points)
+    except Exception:
+        return True
+
+
 def tray_event(window, event, values):
-    """ handles the tray's own events; True when it did.  Click toggles the window, right-click opens the menu """
+    """ handles the tray's own events; True when it did.  Click: a hidden or covered window comes to the front, one in view hides.  Right-click: the menu """
     if event == K_TRAY:
         if values[K_TRAY] == sg.EVENT_SYSTEM_TRAY_ICON_ACTIVATED:
-            window_show(window) if window_hidden(window) else window.hide()
+            window.hide() if window_in_view(window) else window_show(window)
         elif values[K_TRAY] == K_EXIT:                                                               # pystray's gray menu - only if the right-click hook failed
             window.write_event_value(K_EXIT, None)
         return True
@@ -1122,16 +1152,350 @@ def tray_event(window, event, values):
     return False
 
 
+MENU_ARROWS = {}                      # menu_arrows: (font, labels) -> {index: the label with its arrow} - worked out once
+
+
+def menu_arrows(menu, dark):
+    """ Windows draws a sub-menu's arrow in Windows' own menu-text color (black, white only on the lit row) whatever the menu's colors, so on a dark
+        menu it can't be seen.  This puts a › in the menu's own text color at the right end of each sub-menu's label instead.  Windows
+        and dark menus only - a light menu shows Windows' arrow, and Linux / Mac draw theirs in the menu's colors.  Safe to call again """
+    if not (dark and sg.running_windows()) or menu.index('end') is None:
+        return
+    kinds = ('command', 'cascade', 'checkbutton', 'radiobutton')
+    sig = (str(menu.cget('font')), tuple(menu.entrycget(i, 'label') if menu.type(i) in kinds else menu.type(i) for i in range(menu.index('end') + 1)))
+    if sig not in MENU_ARROWS:
+        import tkinter.font
+        f, done = tkinter.font.Font(root=menu, font=menu.cget('font')), {}
+        labels = {i: menu.entrycget(i, 'label') for i in range(menu.index('end') + 1) if menu.type(i) in kinds}
+        labels = {i: text.rstrip('  ›') if menu.type(i) == 'cascade' and text.endswith('›') else text for i, text in labels.items()}
+        cascades = [i for i in labels if menu.type(i) == 'cascade']
+        if cascades:
+            end = max(f.measure(text) for text in labels.values()) + f.measure('      ›')     # the arrows line up a little past the longest label
+            for i in cascades:
+                label = labels[i] + '  '
+                while f.measure(label + ' ›') <= end:
+                    label += ' '
+                while f.measure(label + ' ›') <= end:                                     # thin spaces for the last few pixels
+                    label += '\u2009'
+                done[i] = label + '›'
+        MENU_ARROWS[sig] = done
+    for i, label in MENU_ARROWS[sig].items():
+        menu.entryconfigure(i, label=label)
+
+
 def style_menus(window):
-    """ tk draws menus Windows-gray; recolor every right-click menu (PySimpleGUI makes one per element) and its sub-menus: flat, theme colors """
+    """ tk draws menus Windows-gray; recolor every right-click menu (PySimpleGUI makes one per element) and its sub-menus: flat, theme colors, arrows """
+    bg = sg.theme_background_color()
+    dark = sum(int(bg[i:i + 2], 16) for i in (1, 3, 5)) < 384 if isinstance(bg, str) and len(bg) == 7 else True
+
     def style(widget):
         for child in widget.winfo_children():
             if isinstance(child, tk.Menu):
-                child.configure(bg=sg.theme_background_color(), fg=sg.theme_text_color(), activebackground=C_MENU_SEL, activeforeground='#ffffff',
+                child.configure(bg=bg, fg=sg.theme_text_color(), activebackground=C_MENU_SEL, activeforeground='#ffffff',
                                 disabledforeground='#8a93a3', bd=0, activeborderwidth=1, relief='flat', font=FONT_MENU)
+                menu_arrows(child, dark)
             style(child)
     style(window.TKroot)
 # --- end TRAY ---
+
+
+# --- UPDATE: Restart, and a newer version of this file (program standards, 11-Nov-2026, block 3.1 of 15-Nov) - paste unchanged ---
+# Right-click > Restart starts a fresh copy of this file (same arguments) and this one ends.  While it runs, the program watches its own file:
+# a NEWER VERSION saved over it counts once it has sat UPDATE_SETTLE seconds unchanged and compiles (a half-saved or broken file never counts).
+# Then right-click > New versions decides (remembered, -NEW VERSIONS-; the program sets Update.default for its kind):
+#   'auto'  By itself - hidden in the tray at once, showing once the mouse has been off the window UPDATE_QUIET seconds and nothing of it is open
+#   'ask'   Ask me first - a small pop-up, Restart now / Later (Later by itself after 30 s); hidden in the tray it goes by itself
+#   'menu'  Only say so here - never by itself; the menu reads "Restart - x.y.z is ready"
+# Not the internet: the file itself - whatever put the newer copy there (a synced folder, pip, a download).
+# Block 3: at each start the program compares its VERSION with the one that last ran on this PC (-RAN VERSION-).  Newer = it was updated - by
+# itself, from the menu or by hand.  Update.was holds the old version; update_tag() is the version it was updated from until the user has looked
+# (-UPDATED FROM-, kept across restarts) - the program shows an UPDATED tag by its version, and clicking it shows update_news(update_tag()) (the
+# change-log lines since then) and calls update_tag_seen().  If this PC already has a card-log folder (a notifications program reads it), one line
+# goes into it as well - nothing is created on a PC that doesn't have one.
+# Wiring (update_block.md):  main() start: Update.default = 'auto' / 'ask' / 'menu';   menu, just above Exit: *update_menu(tick)
+#   each event: if update_event(event): end the loop if Update.restart, else remake the menu
+#   timer (every 2-5 s): if update_tick(window, hidden, busy, colors): remake the menu;  if Update.restart: end the loop
+#   the very end of main(), after the window, tray icon and sockets are closed:  if Update.restart: restart_self(['--tray'] if hidden else [])
+UPDATE_SETTLE = 60
+UPDATE_QUIET = 10
+UPDATE_CHOICES = (('auto', "By itself, while I'm not using it"), ('ask', 'Ask me first'), ('menu', 'Only say so in this menu'))
+
+
+class Update:
+    default = 'ask'                   # the program's kind: 'auto' widgets + tray apps, 'ask' other programs that run all day, 'menu' open-and-close
+    seen = None                       # (mtime of this file when last looked at, when it changed - None while it is the file this copy started from)
+    ready = ''                        # a newer VERSION saved over this file (settled, compiles)
+    asked = ''                        # the version the pop-up already asked about - not asked again
+    away = None                       # when the mouse left the window (for 'auto')
+    restart = False                   # set -> the main loop ends, then restart_self()
+    was = ''                          # block 3: the version that ran before on this PC, when this start is a newer one ('' = not updated)
+
+
+def update_mode():
+    mode = sg.user_settings_get_entry('-NEW VERSIONS-', Update.default)
+    return mode if mode in dict(UPDATE_CHOICES) else Update.default
+
+
+def update_check():
+    """ Returns a newer VERSION the first time one is ready, else ''.  Cheap: one stat() a call, the file is read only after it changed and settled """
+    try:
+        mtime = os.path.getmtime(os.path.abspath(__file__))
+    except OSError:
+        return ''
+    if Update.seen is None:
+        Update.seen = (mtime, None)
+        update_noted()                                                    # block 3: the first look - an update since the last run?
+    if mtime != Update.seen[0]:
+        Update.seen = (mtime, time.time())
+        return ''
+    if Update.seen[1] is None or time.time() - Update.seen[1] < UPDATE_SETTLE:
+        return ''
+    Update.seen = (mtime, None)                                           # looked at: wait for the next change
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            text = f.read()
+        compile(text, __file__, 'exec')
+        found = re.search(r"^VERSION = '([0-9.]+)'", text, re.M)
+    except (OSError, SyntaxError, ValueError):
+        return ''
+    newer = found and tuple(int(x) for x in found.group(1).split('.')) > tuple(int(x) for x in VERSION.split('.'))
+    if newer and found.group(1) != Update.ready:
+        Update.ready = found.group(1)
+        return Update.ready
+    return ''
+
+
+def update_noted():
+    """ Block 3, once per start: this VERSION against the one that last ran on this PC (-RAN VERSION-).  Newer: Update.was = the old version, the
+        UPDATED tag is set, and - only where a card-log folder already exists - one line goes into it.  Never raises """
+    try:
+        ran_before = bool(sg.user_settings())                             # a settings file with something in it: it ran here before
+        last = str(sg.user_settings_get_entry('-RAN VERSION-', '') or '')
+        sg.user_settings_set_entry('-RAN VERSION-', VERSION)
+        if not last and not ran_before:                                   # its first run on this PC
+            return
+        if last and tuple(int(x) for x in last.split('.')) >= tuple(int(x) for x in VERSION.split('.')):
+            return
+        last = last or 'an earlier version'                               # it ran here before block 3 kept the version
+        Update.was = last
+        if not sg.user_settings_get_entry('-UPDATED FROM-'):              # not looked at yet since an earlier update: keep the oldest
+            sg.user_settings_set_entry('-UPDATED FROM-', last)
+        import datetime, json, uuid
+        name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+        new = next((re.sub(r'^\s*\d{4}-\d\d-\d\d\s+v?' + re.escape(VERSION) + r'\s*(Claude:\s*)?', '', line).strip()
+                    for line in (globals().get('__doc__') or '').splitlines() if re.match(r'\s*\d{4}-\d\d-\d\d\s+v?' + re.escape(VERSION) + r'\b', line)), '')
+        base = sg.DEFAULT_USER_SETTINGS_WIN_PATH if sys.platform.startswith('win') else sg.DEFAULT_USER_SETTINGS_MAC_PATH if sys.platform == 'darwin' \
+            else sg.DEFAULT_USER_SETTINGS_LINUX_PATH
+        folder = os.path.join(os.path.expanduser(base), 'Notifications')
+        if not os.path.isdir(folder):                                     # no notifications program on this PC: nothing is written
+            return
+        now = datetime.datetime.now()
+        line = {'v': 1, 'id': uuid.uuid4().hex[:12], 'at': now.strftime('%Y-%m-%d %H:%M:%S'), 'program': str(name)[:60], 'title': f'Updated to {VERSION}',
+                'text': (f'Was {last}.  ' + new[:1].upper() + new[1:])[:2000].strip(), 'click': None, 'private': False}
+        with open(os.path.join(folder, f'cards_{now:%Y-%m}.jsonl'), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(line, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+
+
+def update_tag():
+    """ Block 3: the version this program was updated from, until the user has looked ('' = nothing to show).  The program shows an UPDATED tag """
+    return str(sg.user_settings_get_entry('-UPDATED FROM-', '') or '')
+
+
+def update_tag_seen():
+    """ Block 3: the user looked (clicked the tag) - the tag goes away """
+    sg.user_settings_set_entry('-UPDATED FROM-', '')
+
+
+def update_news(since=''):
+    """ Block 3: the change-log lines of the versions after since, up to this one, newest first, each 'x.y.z  what changed' (a line that goes on
+        is joined on).  since = '' or 'an earlier version': all of them """
+    try:
+        floor = tuple(int(x) for x in since.split('.'))
+    except ValueError:
+        floor = ()
+    top, out, keep = tuple(int(x) for x in VERSION.split('.')), [], False
+    for line in (globals().get('__doc__') or '').splitlines():
+        found = re.match(r'\s*\d{4}-\d\d-\d\d\s+v?([0-9]+(?:\.[0-9]+)+)\s+(?:Claude:\s*)?(.*)', line)
+        if found:
+            ver = tuple(int(x) for x in found.group(1).split('.'))
+            keep = floor < ver <= top
+            if keep:
+                out.append(f'{found.group(1)}  {found.group(2).strip()}')
+        elif keep and line.startswith((' ', '\t')) and line.strip():
+            out[-1] += ' ' + line.strip()
+        else:
+            keep = False
+    return out
+
+
+def restart_label():
+    """ The right-click item: 'Restart', or 'Restart - 1.2.3 is ready' once a newer version waits """
+    return f'Restart  -  {Update.ready} is ready' if Update.ready else 'Restart'
+
+
+def update_menu(tick=None, indent='    '):
+    """ The right-click items to put just above Exit: the New versions sub-menu (its choice ticked) and Restart.  tick(on) = the program's own
+        check-mark prefix, so the items line up with its other ones """
+    tick = tick or (lambda on: '✓ ' if on else indent)
+    mode = update_mode()
+    return [f'{indent}New versions', [f'{tick(k == mode)}{text}::-NEW VERSIONS {k}-' for k, text in UPDATE_CHOICES], f'{indent}{restart_label()}::Restart']
+
+
+def update_event(event):
+    """ True when the event was one of this block's: Restart (sets Update.restart) or a New versions choice (saved - remake the menu) """
+    key = event.split('::')[-1] if isinstance(event, str) and '::' in event else event
+    if key == 'Restart':
+        Update.restart = True
+        return True
+    for k, _ in UPDATE_CHOICES:
+        if key == f'-NEW VERSIONS {k}-':
+            sg.user_settings_set_entry('-NEW VERSIONS-', k)
+            return True
+    return False
+
+
+def mouse_away(window):
+    """ True once the mouse has been off the window UPDATE_QUIET seconds in a row """
+    try:
+        root = window.TKroot
+        px, py = root.winfo_pointerxy()
+        x, y, w, h = root.winfo_rootx(), root.winfo_rooty(), root.winfo_width(), root.winfo_height()
+        inside = x <= px < x + w and y <= py < y + h
+    except Exception:
+        inside = False
+    if inside:
+        Update.away = None
+        return False
+    Update.away = Update.away or time.time()
+    return time.time() - Update.away >= UPDATE_QUIET
+
+
+def update_tick(window, hidden=False, busy=False, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Call on the timer.  hidden = the window is hidden in the tray;  busy = a dialog, panel or edit of the program is open (nothing happens
+        then);  colors = (background, text, button) of the pop-up - the program's own theme.  Sets Update.restart when it is time.
+        Returns True when the menu should be remade (a version became ready, or the pop-up was answered Later) """
+    new = update_check()
+    if not Update.ready or Update.restart:
+        return bool(new)
+    mode = update_mode()
+    if mode == 'menu':
+        return bool(new)
+    if hidden:
+        Update.restart = True
+        return False
+    quiet = mouse_away(window) and not busy
+    if mode == 'auto':
+        Update.restart = quiet
+        return bool(new)
+    if Update.asked != Update.ready and not busy:
+        Update.asked = Update.ready                                       # once per version
+        update_offer(window, Update.ready, colors)
+        return not Update.restart
+    return bool(new)
+
+
+def update_offer(window, new, colors=('#1e2430', '#e6eaf2', '#2a62a8')):
+    """ Ask once per version: Restart now / Later (Later by itself after 30 s, so a program never waits long).  Sets Update.restart """
+    Update.asked = new
+    bg, fg, button = colors
+    try:
+        x, y = window.current_location()
+        spot = (x + 20, y + 20)
+    except Exception:
+        spot = (None, None)
+    name = globals().get('APP_NAME') or os.path.splitext(os.path.basename(__file__))[0]
+    answer = sg.popup(f'{name} {new} is here  (you run {VERSION})', 'Restart now to use it?', '(Right-click > New versions: by itself, ask, or only say so)',
+                      title='New version', custom_text=('Restart now', 'Later'), keep_on_top=True, auto_close=True, auto_close_duration=30, location=spot,
+                      background_color=bg, text_color=fg, button_color=('#ffffff', button), font=('Segoe UI', 11), icon=globals().get('ICON'))
+    Update.restart = answer == 'Restart now'
+
+
+def restart_self(extra=()):
+    """ Start this file again with the same arguments (pythonw on Windows - no console).  Call it LAST: after the window, the tray icon and any
+        socket this program listens on are closed, so a one-copy-at-a-time program's new copy finds the way clear """
+    exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    exe = exe if sys.platform.startswith('win') and os.path.isfile(exe) else sys.executable
+    args = [a for a in sys.argv[1:] if a != '--tray'] + list(extra)
+    subprocess.Popen([exe, os.path.abspath(__file__)] + args, cwd=os.path.dirname(os.path.abspath(__file__)))
+# --- end UPDATE ---
+
+
+# --- NEWS: the UPDATED tag + What's new (UPDATE block 3, Tools\update_block.md) - the same in every tray app ---
+TAG_BG, TAG_FG = '#f5c542', '#241a02'                                  # yellow, dark text - the word carries the meaning, not the color
+K_NEWS = "-WHAT'S NEW-"                                                # right-click > What's new..., and a click on the UPDATED tag
+
+
+def news_hint():
+    return f'Updated from {update_tag()} - click UPDATED to see what changed'
+
+
+def show_whats_new(colors=('#1e2430', '#e6eaf2', '#2a62a8'), font=('Segoe UI', 11), lines=None):
+    """ Right-click > What's new... or a click on the UPDATED tag: the change-log lines since the version it was updated from (the whole log when
+        there is no tag), newest first, in the program's own colors.  Esc / Enter / OK closes it - and the tag goes.  lines: a program whose change
+        log isn't in the block's format gives its own """
+    since, (bg, fg, button) = update_tag(), colors
+    lines = update_news(since) if lines is None else lines
+    head = f'Updated from {since} to {VERSION}' if since else f'{APP_NAME} {VERSION}  -  what changed'
+    rows = min(18, max(5, sum(1 + len(line) // 96 for line in lines)))
+    layout = [[sg.Text(head, font=(font[0], font[1] + 1, 'bold'), background_color=bg, text_color=fg, pad=(10, (10, 6)))],
+              [sg.Multiline('\n'.join(lines) or '(no change-log lines found)', size=(96, rows), font=font, disabled=True, background_color=bg, text_color=fg,
+                            border_width=0, no_scrollbar=rows < 18, pad=(10, 0), key='-NEWS TEXT-')],
+              [sg.Push(background_color=bg), sg.Button('OK', button_color=('#ffffff', button), font=font, size=(8, 1), pad=(10, 10))]]
+    win = sg.Window(f"{APP_NAME} - what's new", layout, background_color=bg, keep_on_top=True, modal=True, icon=globals().get('ICON'), finalize=True,
+                    return_keyboard_events=False)
+    win.bind('<Escape>', 'OK')
+    win.bind('<Return>', 'OK')
+    win.read(close=True)
+    update_tag_seen()
+# --- end NEWS ---
+
+
+def draw_updated(d, x, ym, k, fnt):
+    """ The yellow UPDATED pill (UPDATE block 3's tag) - its left edge at x, centred on ym, in design pixels (x k on the picture).  Returns its box """
+    w, h = fnt.getlength('UPDATED') / k + 12, 17
+    d.rounded_rectangle((x * k, (ym - h / 2) * k, (x + w) * k, (ym + h / 2) * k), radius=h / 2 * k, fill=TAG_BG)
+    d.text(((x + w / 2) * k, ym * k), 'UPDATED', font=fnt, fill=TAG_FG, anchor='mm')
+    return x, ym - h / 2, x + w, ym + h / 2
+
+
+K_UPDATE_TICK = '-UPDATE TICK-'                                   # New versions' look, every 3 s
+
+
+def news_colors():
+    """ the New versions pop-up and What's new in the card's colors: (background, text, button) """
+    T = theme_colors()
+    return T['card'], T['text'], C_MENU_SEL
+
+
+def hotkey_news(since=''):
+    """ psghotkey's change log has its own format (oldest first, '6.1.2   11-Nov-2026     Claude: ...', lines that go on indented): the lines of the
+        versions after since, up to this one, newest first.  No version to go by: this version's lines """
+    def ver(text):
+        return tuple(int(x) for x in text.split('.'))
+    top = ver(VERSION)
+    try:
+        floor = ver(since)
+    except ValueError:
+        floor = top[:-1] + (top[-1] - 1,)
+    try:
+        with open(os.path.abspath(__file__), encoding='utf-8') as f:
+            log_text = f.read().split('Changelog since last major release', 1)[1].split('"""', 1)[0]
+    except (OSError, IndexError):
+        log_text = ''
+    out, keep = [], False
+    for line in log_text.splitlines():
+        found = re.match(r'(\d+(?:\.\d+)+)\s+\d\d-\w{3}-\d{4}\s+(?:Claude:\s*)?(.*)', line)
+        if found:
+            keep = floor < ver(found.group(1)) <= top
+            if keep:
+                out.append(f'{found.group(1)}  {found.group(2).strip()}')
+        elif keep and line.startswith(' ') and line.strip():
+            out[-1] += ' ' + line.strip()
+        else:
+            keep = False
+    return out[::-1]
 
 
 # --- STARTUP: start with Windows, hidden in the tray - the same block in every tray app (master copy in tray_app_template.pyw / tray_app_recipe.md) ---
@@ -1190,7 +1554,7 @@ def make_menu():
                  f'    Hotkeys...::{K_HOTKEYS}', '---', *tray,
                  '    Theme', [theme(n) for n in sorted(THEMES, key=lambda n: is_light(THEMES[n]['card']))],        # dark, then light
                  f'    Brightness{f" ({bright_text(G.bright)})" if G.bright else ""}...::{K_BRIGHT}',
-                 '---', '    Edit Me::Edit Me', f'    Version {VERSION}::Version', f'    Exit::{K_EXIT}']]
+                 '---', '    Edit Me::Edit Me', f'    Version {VERSION}::Version', f"    What's new...::{K_NEWS}", *update_menu(tick), f'    Exit::{K_EXIT}']]
 
 
 def apply_menu(window):
@@ -1380,6 +1744,8 @@ def summary():
 
 def hint(part):
     """ What a click will do - shown in the bottom line while the mouse is over that part """
+    if part == 'updated':
+        return news_hint()
     if part == 'gear':
         return 'Hotkeys - add, change or remove them'
     if part == 'close':
@@ -1426,8 +1792,14 @@ def render():
     d.text((27 * k, BTN_Y * k), APP_NAME.upper(), font=big, fill=T['dim'], anchor='lm')
     version_x = 27 * k + d.textlength(APP_NAME.upper(), font=big) + 7 * k
     d.text((version_x, (BTN_Y + 1) * k), f'v{VERSION}', font=small, fill=mix(T['dim'], T['card'], 0.4), anchor='lm')
+    tag_end = 0
+    if update_tag():                                                    # UPDATE block 3: updated, not looked at yet
+        box = draw_updated(d, (version_x + d.textlength(f'v{VERSION}', font=small)) / k + 8, BTN_Y, k, font(True, round(10.5 * k)))
+        hits.append((*box, 'updated'))
+        tag_end = box[2]
     count = f'{n - refused} of {n} working' if refused else f'{n} active' if n else 'none yet'
-    d.text(((GEAR_X - 20) * k, (BTN_Y + 1) * k), count, font=small, fill=status_color('warn', T, text=True) if refused else T['dim'], anchor='rm')
+    if (GEAR_X - 20) - d.textlength(count, font=small) / k > tag_end + 8:  # the count steps aside for the tag when there's no room
+        d.text(((GEAR_X - 20) * k, (BTN_Y + 1) * k), count, font=small, fill=status_color('warn', T, text=True) if refused else T['dim'], anchor='rm')
     for part, cx in (('gear', GEAR_X), ('close', CLOSE_X)):
         hits.append((cx - BTN_R, BTN_Y - BTN_R, cx + BTN_R, BTN_Y + BTN_R, part))
         hot = G.hover == part
@@ -1586,7 +1958,7 @@ def card_event(window, event, values):
 def keep_going(window, event, values):
     """ While the Brightness panel is open the card keeps hovering, scrolling and showing the hotkeys as they fire.  Anything else closes the panel
         and goes to the main loop """
-    return card_event(window, event, values)
+    return event == K_UPDATE_TICK or card_event(window, event, values)          # New versions' look waits while the panel is open
 
 
 def show_card(window):
@@ -1926,9 +2298,12 @@ def demo_settings():
 
 
 def run():
+    Update.default = 'auto'                                                           # a tray app: new versions by itself
     instance_sock, replaced_running_copy = (None, False) if DEMO else claim_single_instance(INSTANCE_PORT)    # a previous copy is told to exit (not by the demo)
     sg.set_options(dpi_awareness=True, font=(FONT_UI, 10))                            # dpi aware: the card is drawn at the screen's own scale, so it's sharp
     settings = get_settings()
+    sg.user_settings_filename(filename=SETTINGS_FILENAME, path=DEMO_FOLDER if DEMO else None)    # the UPDATE block's entries go into psghotkey.json too
+    update_check()                                                                    # UPDATE block 3's first look now: UPDATED on the first drawing
     if DEMO:
         demo_settings()
     G.theme = settings.get(K_THEME, 'Toybox')
@@ -1976,12 +2351,24 @@ def run():
     else:
         show_card(window)
 
+    window.timer_start(3000, key=K_UPDATE_TICK, repeating=True)
     pending = None                                              # a card event that came in while the Brightness panel was open
     while True:
         event, values = pending or window.read()
         pending = None
         if isinstance(event, str) and '::' in event:            # right-click menu items come back as 'label::key'
             event = event.split('::')[-1]
+        if update_event(event):                                 # right-click > Restart, or a New versions choice
+            if Update.restart:
+                break
+            apply_menu(window)
+            continue
+        if event == K_UPDATE_TICK:
+            if update_tick(window, window_hidden(window), False, news_colors()):
+                apply_menu(window)                              # 'Restart - x.y.z is ready'
+            if Update.restart:
+                break
+            continue
         if tray_event(window, event, values):                   # tray click shows / hides the card, right-click opens the menu
             if event == K_TRAY and not window_hidden(window):
                 show_card(window)                               # drawn fresh, and on top again
@@ -2033,12 +2420,20 @@ def run():
             sg.execute_editor(__file__)
         elif event == 'Version':
             sg.popup_scrolled(__file__, f'{APP_NAME}  version {VERSION}', sg.get_versions(), keep_on_top=True, non_blocking=True, size=(70, 10))
+        elif part == 'updated' or event == K_NEWS:              # the UPDATED tag, or right-click > What's new...
+            show_whats_new(news_colors(), lines=hotkey_news(update_tag()))
+            G.hover = None
+            redraw(window)
 
+    hidden = window_hidden(window)
     unregister_hotkeys()    # let go of the hotkeys first - a replacement copy may be waiting to register the same ones
     tray_stop()             # without it the icon "lingers" until moused over
     window.close()
     if instance_sock:
         instance_sock.close()
+    if Update.restart:      # UPDATE block: a fresh copy, as it was - no "Exiting" note
+        restart_self(['--tray'] if hidden else [])
+        return
 
     sg.popup_auto_close(f'Exiting {APP_NAME}', '(This window auto-closes)')
 
@@ -2052,7 +2447,10 @@ def main():
 
 
 def window_icon():
-    return b'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'
+    return b'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'      # a white key on red - a tray icon you can pick out
+
+
+ICON = window_icon()                                            # the UPDATE block's pop-up and What's new use it
 
 
 if __name__ == '__main__':
